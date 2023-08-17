@@ -58,79 +58,93 @@ func NewGraph(opts ...graphconopt) *ExprGraph {
 }
 
 // Clone clones the graph. All nodes gets cloned, and their values are cloned as well.
-func (g *ExprGraph) Clone() interface{} {
-	g2 := new(ExprGraph)
-	g2.name = g.name
+func (g *ExprGraph) Clone() *ExprGraph {
+    clonedGraph := &ExprGraph{}
+    nodeMapping := g.cloneNodes(clonedGraph)
+    g.cloneEdges(clonedGraph, nodeMapping)
+    g.cloneMisc(clonedGraph, nodeMapping)
 
-	mapping := make(map[*Node]*Node) // a map of old nodes to new nodes
-	g2.all = make(Nodes, len(g.all))
-	for i, n := range g.all {
-		cloned := n.Clone().(*Node)
-		cloned.g = g2
-		cloned.id = n.id
+    return clonedGraph
+}
 
-		g2.all[i] = cloned
-		mapping[n] = cloned
-	}
+// cloneNodes creates a deep copy of the nodes from the original graph to the cloned graph.
+func (g *ExprGraph) cloneNodes(clonedGraph *ExprGraph) map[*Node]*Node {
+    mapping := make(map[*Node]*Node)
 
-	// handle each node's children, deriv ofs, etc
-	for i, n := range g.all {
-		cloned := g2.all[i]
-		cloned.children = make(Nodes, len(n.children))
-		for j, c := range n.children {
-			cloned.children[j] = mapping[c]
-		}
+    clonedGraph.all = make(Nodes, len(g.all))
+    for i, node := range g.all {
+        cloned := node.Clone().(*Node)
+        cloned.g = clonedGraph
+        cloned.id = node.id
 
-		cloned.derivOf = make(Nodes, len(n.derivOf))
-		for j, c := range n.derivOf {
-			cloned.derivOf[j] = mapping[c]
-		}
+        clonedGraph.all[i] = cloned
+        mapping[node] = cloned
+    }
 
-		if n.deriv != nil {
-			cloned.deriv = mapping[n.deriv]
-		}
-	}
+    return mapping
+}
 
-	g2.byID = make(map[int64]int)
-	g2.byHash = make(map[uint32]*Node)
-	for k, v := range g.byHash {
-		g2.byHash[k] = mapping[v]
-	}
+// cloneEdges replicates the edges from the original graph to the cloned graph using the nodeMapping.
+func (g *ExprGraph) cloneEdges(clonedGraph *ExprGraph, nodeMapping map[*Node]*Node) {
+    for i, node := range g.all {
+        clonedNode := clonedGraph.all[i]
 
-	g2.evac = make(map[uint32]Nodes)
-	for k, v := range g.evac {
-		g2.evac[k] = make(Nodes, len(v))
-		for i, n := range v {
-			g2.evac[k][i] = mapping[n]
-		}
-	}
+        clonedNode.children = g.cloneNodeSlice(node.children, nodeMapping)
+        clonedNode.derivOf = g.cloneNodeSlice(node.derivOf, nodeMapping)
 
-	g2.to = make(map[*Node]Nodes)
-	for k, v := range g.to {
-		to := mapping[k]
-		g2.to[to] = make(Nodes, len(v))
-		for i, n := range v {
-			g2.to[to][i] = mapping[n]
-		}
-	}
+        if node.deriv != nil {
+            clonedNode.deriv = nodeMapping[node.deriv]
+        }
+    }
+}
 
-	g2.leaves = make(Nodes, len(g.leaves))
-	for i, n := range g.leaves {
-		g2.leaves[i] = mapping[n]
-	}
+// cloneNodeSlice creates a deep copy of a slice of nodes.
+func (g *ExprGraph) cloneNodeSlice(nodeSlice Nodes, nodeMapping map[*Node]*Node) Nodes {
+    clonedSlice := make(Nodes, len(nodeSlice))
+    for i, node := range nodeSlice {
+        clonedSlice[i] = nodeMapping[node]
+    }
+    return clonedSlice
+}
 
-	g2.constants = make(Nodes, len(g.constants))
-	for i, n := range g.constants {
-		g2.constants[i] = mapping[n]
-	}
+// cloneMisc handles the replication of other structures and fields from the original graph to the cloned graph.
+func (g *ExprGraph) cloneMisc(clonedGraph *ExprGraph, nodeMapping map[*Node]*Node) {
+    clonedGraph.byID = make(map[int64]int)
+    clonedGraph.byHash = g.cloneMap(g.byHash, nodeMapping)
+    clonedGraph.evac = g.cloneEvacMap(g.evac, nodeMapping)
+    clonedGraph.to = g.cloneToMap(g.to, nodeMapping)
+    clonedGraph.leaves = g.cloneNodeSlice(g.leaves, nodeMapping)
+    clonedGraph.constants = g.cloneNodeSlice(g.constants, nodeMapping)
+    clonedGraph.roots = g.cloneNodeSlice(g.roots, nodeMapping)
+    clonedGraph.counter = g.counter
+}
 
-	g2.roots = make(Nodes, len(g.roots))
-	for i, n := range g.roots {
-		g2.roots[i] = mapping[n]
-	}
+// cloneMap replicates a map of uint32 to nodes.
+func (g *ExprGraph) cloneMap(origMap map[uint32]*Node, nodeMapping map[*Node]*Node) map[uint32]*Node {
+    clonedMap := make(map[uint32]*Node)
+    for key, node := range origMap {
+        clonedMap[key] = nodeMapping[node]
+    }
+    return clonedMap
+}
 
-	g2.counter = g.counter
-	return g2
+// cloneEvacMap replicates a map of uint32 to slices of nodes.
+func (g *ExprGraph) cloneEvacMap(origMap map[uint32]Nodes, nodeMapping map[*Node]*Node) map[uint32]Nodes {
+    clonedMap := make(map[uint32]Nodes)
+    for key, nodeSlice := range origMap {
+        clonedMap[key] = g.cloneNodeSlice(nodeSlice, nodeMapping)
+    }
+    return clonedMap
+}
+
+// cloneToMap replicates a map of nodes to slices of nodes.
+func (g *ExprGraph) cloneToMap(origMap map[*Node]Nodes, nodeMapping map[*Node]*Node) map[*Node]Nodes {
+    clonedMap := make(map[*Node]Nodes)
+    for keyNode, nodeSlice := range origMap {
+        to := nodeMapping[keyNode]
+        clonedMap[to] = g.cloneNodeSlice(nodeSlice, nodeMapping)
+    }
+    return clonedMap
 }
 
 // AddNode adds n to the graph. It panics if the added node ID matches an existing node ID.
